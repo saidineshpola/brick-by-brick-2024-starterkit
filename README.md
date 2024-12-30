@@ -1,6 +1,5 @@
-# Brick-by-Brick(BBB)
-this is starterkit for [Brick by Brick 2024](https://www.aicrowd.com/challenges/brick-by-brick-2024) challenge.
-
+# Brick-by-Brick 2024(BBB2024) 
+this is starterkit for [Brick by Brick 2024](https://www.aicrowd.com/challenges/brick-by-brick-2024) multi label time series classification challenge.
 
  
 ## Usage
