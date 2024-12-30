@@ -482,7 +482,6 @@ def prepare_train_timeseries_dataset(
 
     total_files = len(df)
     print(f"Total {split_name} files to process: {total_files}")
-    print(f"Label columns: {list(label_columns)}")
 
     print(f"Loading and processing {split_name} time series data...")
     for _, row in tqdm(df.iterrows(), total=total_files):
