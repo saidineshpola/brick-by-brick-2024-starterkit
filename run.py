@@ -342,13 +342,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--label_columns_file",
         type=str,
-        default="/data1/max/telugu_corpus/time_series/train_y_v0.1.0.csv",
+        default="train_y_v0.1.0.csv",
         help="Path to label columns file",
     )
     parser.add_argument(
         "--test_files_names",
         type=str,
-        default="/data1/max/telugu_corpus/time_series/data/BBB/test_file_names.txt",
+        default="test_file_names.txt",
         help="Path to label columns file",
     )
 
