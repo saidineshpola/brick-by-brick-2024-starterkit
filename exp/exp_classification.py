@@ -889,8 +889,10 @@ class Exp_Classification(Exp_Basic):
 
     def _select_criterion(self, args):
         if args.loss == "BCE":
-            criterion = nn.BCEWithLogitsLoss()
+            print("USing BCE loss")
+            criterion = nn.BCEWithLogitsLoss(reduction="sum")
         else:
+            print("USing HierarchicalMultiLabelLoss loss")
             criterion = ImprovedHierarchicalMultiLabelLoss(
                 hierarchy_dict=hierarchy_dict,
                 exclusive_classes=[5, 12, 54, 65, 66, 71],
@@ -1044,7 +1046,7 @@ class Exp_Classification(Exp_Basic):
         # print("Optimal_throesholds", self.optimal_thresholds)
         # Apply optimal thresholds
         thresholded_preds = (predictions >= self.optimal_thresholds).astype(int)
-        # thresholded_preds = enforce_hierarchy(thresholded_preds)
+        thresholded_preds = enforce_hierarchy(thresholded_preds)
         print("Predictions", thresholded_preds[:2])
         metrics = calculate_metrics(trues, thresholded_preds)
         print_metrics(metrics, indx_to_labels)
@@ -1123,7 +1125,9 @@ class Exp_Classification(Exp_Basic):
 
         all_predictions = []
 
-        with open(self.args.test_files_names, "r") as f:
+        with open(
+            os.path.join(self.args.root_path, self.args.test_files_names), "r"
+        ) as f:
             file_names = [line.rstrip("\n") for line in f]
 
         self.model.eval()
@@ -1145,7 +1149,7 @@ class Exp_Classification(Exp_Basic):
                     predictions = (probs >= 0.5).astype(
                         np.float32
                     )  # fallback to default threshold
-                # predictions = enforce_hierarchy(predictions)
+                predictions = enforce_hierarchy(predictions)
                 for batch_idx in range(predictions.shape[0]):
                     all_predictions.append(
                         {
@@ -1156,7 +1160,8 @@ class Exp_Classification(Exp_Basic):
                 current_idx += predictions.shape[0]
 
         final_df = self._create_submission_df(
-            all_predictions, self.args.label_columns_file
+            all_predictions,
+            os.path.join(self.args.root_path, self.args.label_columns_file),
         )
         output_path = os.path.join("./results", setting, "submission")
         os.makedirs(output_path, exist_ok=True)
