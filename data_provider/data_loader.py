@@ -1287,15 +1287,7 @@ class UEAloader(Dataset):
             )
 
             batch_x = batch_x.reshape((1 * seq_len, num_columns))
-
-        # print("Batch X shape:", batch_x.shape)
-        # print("Labels shape:", labels.shape)
-        # import sys
-
-        # sys.exit()
         return self.instance_norm(torch.from_numpy(batch_x)), torch.from_numpy(labels)
 
     def __len__(self):
         return len(self.all_IDs)
-
-
