@@ -59,8 +59,10 @@ python -u run.py   --task_name classification   --is_training 1   --root_path /d
  --model_id ETTh1_96_96   --model 'TimesNet'   --data BBB   --seq_len 8100   --e_layer 6   --enc_in 1   --d_model 8   --d_ff 32   --des 'Exp6' \
   --itr 1   --top_k 3   --train_epochs 20   --   --num_class 94  --dropout 0.3   --batch_size 32    --learning_rate 0.001
 ```
+4. Colab notebook
+   <a href="https://colab.research.google.com/drive/1Bs6aE5gSlM_K0IKH3x2AcvVmuzrpjmzt#scrollTo=DoX7_j6K6T7z" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
 
-4. Develop your own model.
+6. Develop your own model.
 
 - Add the model file to the folder `./models`. You can follow the `./models/Transformer.py`.
 - Include the newly added model in the `Exp_Basic.model_dict` of  `./exp/exp_basic.py`.
