@@ -52,19 +52,12 @@ python preprocess.py \
 <img src=".\pic\dataset.png" height = "200" alt="" align=center />
 </p>
 
-3. Train and evaluate model. We provide the experiment scripts for all benchmarks under the folder `./scripts/`. You can reproduce the experiment results as the following examples:
+3. Train and evaluate model. We provide the experiment scripts for all benchmarks under the folder `./scripts/`. You can reproduce the experiment results as the following example:
 
 ```
-# long-term forecast
-bash ./scripts/long_term_forecast/ETT_script/TimesNet_ETTh1.sh
-# short-term forecast
-bash ./scripts/short_term_forecast/TimesNet_M4.sh
-# imputation
-bash ./scripts/imputation/ETT_script/TimesNet_ETTh1.sh
-# anomaly detection
-bash ./scripts/anomaly_detection/PSM/TimesNet.sh
-# classification
-bash ./scripts/classification/TimesNet.sh
+python -u run.py   --task_name classification   --is_training 1   --root_path /data1/max/telugu_corpus/time_series/data/BBB   --data_path train.csv \
+ --model_id ETTh1_96_96   --model 'TimesNet'   --data BBB   --seq_len 8100   --e_layer 6   --enc_in 1   --d_model 8   --d_ff 32   --des 'Exp6' \
+  --itr 1   --top_k 3   --train_epochs 20   --   --num_class 94  --dropout 0.3   --batch_size 32    --learning_rate 0.001
 ```
 
 4. Develop your own model.
