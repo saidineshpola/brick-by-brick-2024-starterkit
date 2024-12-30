@@ -292,13 +292,13 @@ hierarchy = {
 }
 
 
-def create_validation_set(df, val_percentage=0.2, hierarchy=None):
+def create_validation_set(trainy_df, val_percentage=0.2, hierarchy=None):
     """
     Create validation set while respecting hierarchical relationships
 
     Parameters:
     -----------
-    df : pandas.DataFrame
+    trainy_df : pandas.DataFrame
         Input DataFrame containing file paths and labels
     val_percentage : float
         Percentage of data to use for validation (default: 0.2)
@@ -312,21 +312,77 @@ def create_validation_set(df, val_percentage=0.2, hierarchy=None):
     """
     if hierarchy is None or len(hierarchy) == 0:
         # Simple random split if no hierarchy is provided
-        shuffled_df = df.sample(frac=1, random_state=42)
-        split_idx = int(len(df) * (1 - val_percentage))
+        shuffled_df = trainy_df.sample(frac=1, random_state=42)
+        split_idx = int(len(trainy_df) * (1 - val_percentage))
         return shuffled_df.iloc[:split_idx], shuffled_df.iloc[split_idx:]
 
-    # Get unique combinations of hierarchy columns
-    hierarchy_groups = df[hierarchy].drop_duplicates()
+    print("Using Hierarchy Split")
+    # Calculate the number of samples needed for validation
+    total_samples = len(trainy_df)
+    val_size = int(total_samples * val_percentage)
 
-    # Random split at the hierarchy level
-    val_size = int(len(hierarchy_groups) * val_percentage)
-    val_groups = hierarchy_groups.sample(n=val_size, random_state=42)
+    # Initialize lists to hold indices for train and validation sets
+    val_indices = set()
+    train_indices = set(range(total_samples))
 
-    # Create masks for splitting
-    val_mask = df[hierarchy].merge(val_groups, how="inner", on=hierarchy).index
-    val_df = df.loc[val_mask]
-    train_df = df.drop(val_mask)
+    # Ensure at least 20% of each child class is included in the validation set
+    for parent, children in hierarchy.items():
+        # Only Check for 3 level hierarchy
+        if len(parent.split("_")) != 3:
+            continue
+        for child in children:
+            child_indices = trainy_df.index[trainy_df[child] == 1].tolist()
+            if not child_indices:
+                continue
+            # Calculate the number of samples needed for this child class
+            child_val_size = max(1, int(len(child_indices) * val_percentage))
+            # Randomly select indices for validation
+            selected_val_indices = np.random.choice(
+                child_indices, child_val_size, replace=False
+            )
+            val_indices.update(selected_val_indices)
+
+    # Add at least 1 entry to validation for classes with 0 entries in val but more than 4 in train
+    for col in trainy_df.columns:
+        if (trainy_df[col] == 1).sum() >= 5 and (
+            trainy_df.iloc[list(val_indices)][col] == 1
+        ).sum() == 0:
+            additional_index = trainy_df.index[
+                (trainy_df[col] == 1) & (trainy_df.index.isin(train_indices))
+            ].tolist()
+            if additional_index:
+                val_indices.add(additional_index[0])
+
+    # Add remaining samples to reach the desired validation size
+    remaining_val_size = val_size - len(val_indices)
+    if remaining_val_size > 0:
+        remaining_indices = list(train_indices - val_indices)
+        additional_val_indices = np.random.choice(
+            remaining_indices, remaining_val_size, replace=False
+        )
+        val_indices.update(additional_val_indices)
+
+    # Convert sets to lists
+    val_indices = list(val_indices)
+    train_indices = list(train_indices - set(val_indices))
+
+    # Ensure training set is larger than validation set
+    if len(train_indices) < len(val_indices):
+        excess_val_indices = val_indices[len(train_indices) :]
+        val_indices = val_indices[: len(train_indices)]
+        train_indices.extend(excess_val_indices)
+
+    # Split the data
+    train_df = trainy_df.iloc[train_indices]
+    val_df = trainy_df.iloc[val_indices]
+
+    numerical_cols = train_df.select_dtypes(include=["float64", "int64"]).columns
+
+    # Iterate over each numerical column and count occurrences of 1.0
+    for col in numerical_cols:
+        count_ones = (val_df[col] == 1.0).sum()
+        count_ones_train = (train_df[col] == 1.0).sum()
+        print(f"Count of Column '{col}' : train {count_ones_train}, val {count_ones} ")
 
     print(f"Training set size: {len(train_df)}")
     print(f"Validation set size: {len(val_df)}")
