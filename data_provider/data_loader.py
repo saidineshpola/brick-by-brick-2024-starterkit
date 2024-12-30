@@ -15,16 +15,12 @@ from sktime.datasets import load_from_tsfile_to_dataframe
 import warnings
 from utils.augmentation import run_augmentation_single
 import joblib
+import random
+from scipy.interpolate import interp1d
 
 warnings.filterwarnings("ignore")
 
-from skmultilearn.model_selection import iterative_train_test_split
-from sklearn.neighbors import NearestNeighbors
-import random
 
-import numpy as np
-from scipy.interpolate import interp1d
-import random
 
 
 def time_series_augmentations(x, y, cut_ratio=0.4, num_augmentations=1):
