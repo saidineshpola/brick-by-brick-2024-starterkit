@@ -5,7 +5,7 @@ import torch
 
 
 def collate_fn(data, max_len=None):
-    """Build mini-batch tensors from a list of (X, mask) tuples. Mask input. Create
+    """Build mini-batch tensors from a list of (X, mask) tuples. Mask input.
     Args:
         data: len(batch_size) list of tuples (X, y).
             - X: torch tensor of shape (seq_length, feat_dim); variable seq_length.
@@ -16,43 +16,59 @@ def collate_fn(data, max_len=None):
     Returns:
         X: (batch_size, padded_length, feat_dim) torch tensor of masked features (input)
         targets: (batch_size, padded_length, feat_dim) torch tensor of unmasked features (output)
-        target_masks: (batch_size, padded_length, feat_dim) boolean torch tensor
-            0 indicates masked values to be predicted, 1 indicates unaffected/"active" feature values
         padding_masks: (batch_size, padded_length) boolean tensor, 1 means keep vector at this position, 0 means padding
     """
-
     batch_size = len(data)
     features, labels = zip(*data)
 
-    # Stack and pad features and masks (convert 2D to 3D tensors, i.e. add batch dimension)
-    lengths = [X.shape[0] for X in features]  # original sequence length for each time series
+    # Get original sequence lengths
+    lengths = [X.shape[0] for X in features]
     if max_len is None:
         max_len = max(lengths)
 
-    X = torch.zeros(batch_size, max_len, features[0].shape[-1])  # (batch_size, padded_length, feat_dim)
+    # Initialize tensors with zeros
+    X = torch.zeros(batch_size, max_len, features[0].shape[-1])
+    padding_masks = torch.zeros((batch_size, max_len), dtype=torch.bool)  # Initialize with False
+
+    # Fill in the actual data and create padding masks
     for i in range(batch_size):
         end = min(lengths[i], max_len)
         X[i, :end, :] = features[i][:end, :]
+        padding_masks[i, :end] = True  # Set True for actual data, False for padding
 
-    targets = torch.stack(labels, dim=0)  # (batch_size, num_labels)
-
-    padding_masks = padding_mask(torch.tensor(lengths, dtype=torch.int16),
-                                 max_len=max_len)  # (batch_size, padded_length) boolean tensor, "1" means keep
+    targets = torch.stack(labels, dim=0)
 
     return X, targets, padding_masks
 
+def create_padding_mask(X):
+    """
+    Creates a padding mask by detecting zero vectors from the end of sequences.
+    Args:
+        X: Input tensor of shape (batch_size, seq_length, feat_dim)
+    Returns:
+        Boolean tensor of shape (batch_size, seq_length) where True indicates non-padding positions
+    """
+    # Calculate L2 norm across feature dimension
+    norms = torch.norm(X, dim=2)  # Shape: (batch_size, seq_length)
 
-def padding_mask(lengths, max_len=None):
-    """
-    Used to mask padded positions: creates a (batch_size, max_len) boolean mask from a tensor of sequence lengths,
-    where 1 means keep element at this position (time step)
-    """
-    batch_size = lengths.numel()
-    max_len = max_len or lengths.max_val()  # trick works because of overloading of 'or' operator for non-boolean types
-    return (torch.arange(0, max_len, device=lengths.device)
-            .type_as(lengths)
-            .repeat(batch_size, 1)
-            .lt(lengths.unsqueeze(1)))
+    # Create a mask where True indicates non-zero vectors
+    masks = norms > 0
+
+    # For each sequence, flip all masks to False once we encounter the first False
+    # when moving from right to left
+    batch_size, seq_length = masks.shape
+    for i in range(batch_size):
+        # Find the last non-zero position
+        last_nonzero = -1
+        for j in range(seq_length - 1, -1, -1):
+            if masks[i, j]:
+                last_nonzero = j
+                break
+        # Set all positions after last_nonzero to False
+        if last_nonzero != -1:
+            masks[i, last_nonzero + 1 :] = False
+
+    return masks
 
 
 class Normalizer(object):
@@ -60,7 +76,14 @@ class Normalizer(object):
     Normalizes dataframe across ALL contained rows (time steps). Different from per-sample normalization.
     """
 
-    def __init__(self, norm_type='standardization', mean=None, std=None, min_val=None, max_val=None):
+    def __init__(
+        self,
+        norm_type="standardization",
+        mean=None,
+        std=None,
+        min_val=None,
+        max_val=None,
+    ):
         """
         Args:
             norm_type: choose from:
@@ -92,16 +115,20 @@ class Normalizer(object):
             if self.max_val is None:
                 self.max_val = df.max()
                 self.min_val = df.min()
-            return (df - self.min_val) / (self.max_val - self.min_val + np.finfo(float).eps)
+            return (df - self.min_val) / (
+                self.max_val - self.min_val + np.finfo(float).eps
+            )
 
         elif self.norm_type == "per_sample_std":
             grouped = df.groupby(by=df.index)
-            return (df - grouped.transform('mean')) / grouped.transform('std')
+            return (df - grouped.transform("mean")) / grouped.transform("std")
 
         elif self.norm_type == "per_sample_minmax":
             grouped = df.groupby(by=df.index)
-            min_vals = grouped.transform('min')
-            return (df - min_vals) / (grouped.transform('max') - min_vals + np.finfo(float).eps)
+            min_vals = grouped.transform("min")
+            return (df - min_vals) / (
+                grouped.transform("max") - min_vals + np.finfo(float).eps
+            )
 
         else:
             raise (NameError(f'Normalize method "{self.norm_type}" not implemented'))
@@ -112,7 +139,7 @@ def interpolate_missing(y):
     Replaces NaN values in pd.Series `y` using linear interpolation
     """
     if y.isna().any():
-        y = y.interpolate(method='linear', limit_direction='both')
+        y = y.interpolate(method="linear", limit_direction="both")
     return y
 
 
