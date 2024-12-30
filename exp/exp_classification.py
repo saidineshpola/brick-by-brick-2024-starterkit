@@ -1171,8 +1171,6 @@ class Exp_Classification(Exp_Basic):
         return
 
 
-import numpy as np
-
 
 def enforce_hierarchy(predictions, direct_nodes=[5, 12, 54, 71]):
     """
