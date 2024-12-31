@@ -851,7 +851,7 @@ class Exp_Classification(Exp_Basic):
     def _build_model(self):
         # model input depends on data
         train_data, train_loader = self._get_data(flag="TRAIN")
-        test_data, test_loader = self._get_data(flag="TEST")
+        test_data, test_loader = self._get_data(flag="VAL")
         self.args.seq_len = (
             max(train_data.max_seq_len, test_data.max_seq_len)
             if not self.args.seq_len
@@ -879,18 +879,18 @@ class Exp_Classification(Exp_Basic):
         return data_set, data_loader
 
     def _select_optimizer(self):
-        # model_optim = optim.Adam(
-        #     self.model.parameters(), lr=self.args.learning_rate, weight_decay=1e-5
-        # )
-        model_optim = optim.RAdam(
+        model_optim = optim.Adam(
             self.model.parameters(), lr=self.args.learning_rate, weight_decay=1e-5
         )
+        # model_optim = optim.RAdam(
+        #     self.model.parameters(), lr=self.args.learning_rate, weight_decay=1e-5
+        # )
         return model_optim
 
     def _select_criterion(self, args):
         if args.loss == "BCE":
             print("USing BCE loss")
-            criterion = nn.BCEWithLogitsLoss(reduction="sum")
+            criterion = nn.BCEWithLogitsLoss()  # reduction="sum")
         else:
             print("USing HierarchicalMultiLabelLoss loss")
             criterion = ImprovedHierarchicalMultiLabelLoss(
@@ -1026,6 +1026,7 @@ class Exp_Classification(Exp_Basic):
                 outputs = self.model(
                     batch_x, padding_mask, None, None
                 )  # self.model.module.predict(batch_x, padding_mask, None, None)
+                # outputs = self.model.module.predict(batch_x, padding_mask, None, None)
                 loss = criterion(outputs, label).cpu()
 
                 preds.append(outputs.detach())
@@ -1042,11 +1043,11 @@ class Exp_Classification(Exp_Basic):
 
         # Find optimal thresholds during validation
         self.optimal_thresholds = self.find_optimal_thresholds(predictions, trues)
-        # self.optimal_thresholds = 0.5
-        # print("Optimal_throesholds", self.optimal_thresholds)
+        # self.optimal_thresholds = 0.4
+        print("Optimal_throesholds", self.optimal_thresholds)
         # Apply optimal thresholds
         thresholded_preds = (predictions >= self.optimal_thresholds).astype(int)
-        thresholded_preds = enforce_hierarchy(thresholded_preds)
+        # thresholded_preds = enforce_hierarchy(thresholded_preds)
         print("Predictions", thresholded_preds[:2])
         metrics = calculate_metrics(trues, thresholded_preds)
         print_metrics(metrics, indx_to_labels)
@@ -1082,7 +1083,7 @@ class Exp_Classification(Exp_Basic):
 
             # If class is very imbalanced, adjust threshold range
             if pos_ratio < 0.1:
-                threshold_range = np.arange(0.3, 0.95, 0.02)
+                threshold_range = np.arange(0.3, 0.7, 0.02)
 
             for threshold in threshold_range:
                 pred_i = (predictions[:, i] > threshold).astype(int)
@@ -1140,6 +1141,7 @@ class Exp_Classification(Exp_Basic):
                 outputs = self.model(
                     batch_x, padding_mask, None, None
                 )  # self.model.module.predict(batch_x, padding_mask, None, None)
+                # outputs = self.model.module.predict(batch_x, padding_mask, None, None)
                 probs = torch.sigmoid(outputs).cpu().numpy()
 
                 # Apply optimal thresholds found during validation
@@ -1149,7 +1151,7 @@ class Exp_Classification(Exp_Basic):
                     predictions = (probs >= 0.5).astype(
                         np.float32
                     )  # fallback to default threshold
-                predictions = enforce_hierarchy(predictions)
+                # predictions = enforce_hierarchy(predictions)
                 for batch_idx in range(predictions.shape[0]):
                     all_predictions.append(
                         {
@@ -1171,16 +1173,14 @@ class Exp_Classification(Exp_Basic):
         return
 
 
-
-def enforce_hierarchy(predictions, direct_nodes=[5, 12, 54, 71]):
+def enforce_hierarchy_argmax(predictions, class_indices=[5, 12, 21, 65, 66, 71]):
     """
-    Enforces hierarchical constraints on predictions one row at a time.
-    If a parent class is predicted as 1, all its children and descendants should be 1.
-    If a child class is predicted as 1, its parent and ancestors should also be 1.
+    Enforces hierarchical constraints on predictions one row at a time using argmax.
+    Only keeps ancestors and descendants of the selected node (highest probability among specified indices).
 
     Args:
-        predictions: numpy array of shape (batch_size, num_classes) containing 0s and 1s
-        direct_nodes: List of nodes to check for direct predictions
+        predictions: numpy array of shape (batch_size, num_classes) containing probabilities
+        class_indices: List of class indices to consider for argmax
 
     Returns:
         modified_predictions: numpy array of shape (batch_size, num_classes) with hierarchy enforced
@@ -1193,10 +1193,10 @@ def enforce_hierarchy(predictions, direct_nodes=[5, 12, 54, 71]):
     batch_size, num_classes = predictions.shape
     modified_predictions = np.zeros_like(predictions)
 
-    # Pre-compute ancestors and descendants for all nodes to avoid repeated calculations
+    # Pre-compute ancestors and descendants for relevant nodes
     node_ancestors = {}
     node_descendants = {}
-    for node in range(num_classes):
+    for node in class_indices:
         node_ancestors[node] = get_ancestors(node)
         node_descendants[node] = get_descendants(node)
 
@@ -1204,35 +1204,30 @@ def enforce_hierarchy(predictions, direct_nodes=[5, 12, 54, 71]):
     for row_idx in range(batch_size):
         row = predictions[row_idx]
         modified_row = np.zeros(num_classes)
-        direct_node_found = False
-        # Step 1: Handle direct nodes first
-        for node in direct_nodes:
-            if node < num_classes and row[node] == 1.0:
-                modified_row[node] = 1.0
-                direct_node_found = True
 
-        if direct_node_found:
-            continue
+        # Get probabilities only for specified indices
+        specified_probs = {idx: row[idx] for idx in class_indices if idx < num_classes}
 
-        # Step 2: Process positive predictions and their relationships
-        positive_nodes = np.where(row == 1.0)[0]
-        for node in positive_nodes:
-            # Mark the current node
-            modified_row[node] = 1.0
+        if specified_probs:
+            # Find the index with highest probability among specified classes
+            selected_node = max(specified_probs.items(), key=lambda x: x[1])[0]
 
-            # Mark all ancestors
-            ancestors = node_ancestors[node]
+            # Set the selected node to 1
+            modified_row[selected_node] = 1.0
+
+            # Set all ancestors to 1
+            ancestors = node_ancestors[selected_node]
             for ancestor in ancestors:
                 if ancestor < num_classes:
                     modified_row[ancestor] = 1.0
 
-            # Mark all descendants
-            descendants = node_descendants[node]
+            # Set all descendants to 1
+            descendants = node_descendants[selected_node]
             for descendant in descendants:
                 if descendant < num_classes:
                     modified_row[descendant] = 1.0
 
-        # Update the final predictions matrix one row at a time
+        # Update the final predictions matrix
         modified_predictions[row_idx] = modified_row
 
     return modified_predictions
