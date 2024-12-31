@@ -141,6 +141,12 @@ def run_augmentation_single(x, y, args):
     return aug_x[0], aug_y[0], {"method": "random_augmentation"}
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 class Dataset_BBB(Dataset):
     def __init__(
         self,
@@ -149,7 +155,7 @@ class Dataset_BBB(Dataset):
         flag="train",
         size=None,
         features="S",
-        scaling=False,
+        scaling=True,
         timeenc=0,
         freq="h",
         seed=42,
@@ -157,173 +163,212 @@ class Dataset_BBB(Dataset):
     ):
         self.args = args
         self.features = features
-        self.scale = False  # scaling
+        self.scale = scaling
         self.timeenc = timeenc
         self.freq = freq
         self.flag = flag.lower()
         self.root_path = root_path
         self.seed = seed
         self.val_ratio = val_ratio
-        self.kept_indices = [5, 12, 54, 65, 66, 71]  # Indices to keep
+        self.kept_indices = [5, 12, 54, 65, 66, 71]
         np.random.seed(seed)
-        self.scaler = StandardScaler()
+        self.scaler = None
+        self.scaler_path = os.path.join(root_path, "scaler.joblib")
         self.__read_data__()
 
-    # def __read_data__(self):
-    #     scaler_path = os.path.join(self.root_path, "scaler.save")
+    def print_data_stats(self, data, stage):
+        """Helper function to print data statistics"""
+        if isinstance(data, list):
+            data = np.concatenate(data)
+        stats = {
+            "min": np.min(data),
+            "max": np.max(data),
+            "mean": np.mean(data),
+            "std": np.std(data),
+            "nan_count": np.isnan(data).sum(),
+            "inf_count": np.isinf(data).sum(),
+        }
+        logger.info(f"\n{stage} statistics: {stats}")
+        return stats
 
-    #     if self.flag == "test":
-    #         data_path = os.path.join(self.root_path, "test_data.pkl")
-    #         with open(data_path, "rb") as f:
-    #             data_dict = pickle.load(f)
+    def log_transform(self, data):
+        """Apply log transformation with sign preservation"""
+        data = np.array(data, dtype=np.float32)
+        transformed = np.zeros_like(data)
 
-    #         self.data_x = data_dict["series"]
-    #         self.file_names = data_dict["file_names"]
+        # Store signs and work with absolute values
+        signs = np.sign(data)
+        abs_data = np.abs(data)
 
-    #         if self.scale and os.path.exists(scaler_path):
-    #             self.scaler = joblib.load(scaler_path)
-    #             for i in range(len(self.data_x)):
-    #                 self.data_x[i] = self.scaler.transform(
-    #                     self.data_x[i].reshape(-1, 1)
-    #                 ).reshape(-1)
+        # For values with magnitude > 10
+        mask_high = abs_data > 10
+        transformed[mask_high] = np.log1p(abs_data[mask_high] - 10) + np.log(10)
 
-    #     else:  # train or val
-    #         split_name = "train" if self.flag == "train" else "val"
-    #         data_path = os.path.join(self.root_path, f"{split_name}_data.pkl")
+        # Keep values between -10 and 10 unchanged
+        mask_mid = abs_data <= 10
+        transformed[mask_mid] = data[mask_mid]
 
-    #         with open(data_path, "rb") as f:
-    #             data_dict = pickle.load(f)
+        # Handle any potential NaN or inf values
+        transformed = np.nan_to_num(
+            transformed, nan=0.0, posinf=np.log(1e10), neginf=-np.log(1e10)
+        )
 
-    #         self.data_x = data_dict["series"]
-    #         self.data_y = data_dict["labels"]
-    #         self.data_y[self.data_y == -1.0] = 0.0  # Convert -1 to 0
+        return transformed * signs
 
-    #         if self.scale:
-    #             if self.flag == "train":
-    #                 # Fit scaler on all training data
-    #                 all_data = np.concatenate(self.data_x)
-    #                 self.scaler.fit(all_data.reshape(-1, 1))
-    #                 dump(self.scaler, scaler_path)
-    #             elif os.path.exists(scaler_path):
-    #                 self.scaler = load(scaler_path)
+    def inverse_transform(self, data):
+        """Inverse transform both scaling and log transformation"""
+        data = np.array(data)
 
-    #             # Transform each series individually
-    #             for i in range(len(self.data_x)):
-    #                 self.data_x[i] = self.scaler.transform(
-    #                     self.data_x[i].reshape(-1, 1)
-    #                 ).reshape(-1)
+        if self.scale and self.scaler is not None:
+            data = self.scaler.inverse_transform(data.reshape(-1, 1)).reshape(-1)
+
+        # Inverse log transform
+        signs = np.sign(data)
+        abs_data = np.abs(data)
+
+        transformed = np.zeros_like(data, dtype=np.float32)
+
+        # Inverse transform for values that were > 10
+        mask_high = abs_data > np.log(10)
+        transformed[mask_high] = (
+            np.exp(abs_data[mask_high] - np.log(10)) + 10
+        ) * signs[mask_high]
+
+        # Values <= log(10) remain unchanged
+        mask_low = abs_data <= np.log(10)
+        transformed[mask_low] = data[mask_low]
+
+        return transformed
 
     def __read_data__(self):
-        scaler_path = os.path.join(self.root_path, "scaler.save")
+        try:
+            if self.flag == "test":
+                data_path = os.path.join(self.root_path, "test_data.pkl")
+                with open(data_path, "rb") as f:
+                    data_dict = pickle.load(f)
 
-        if self.flag == "test":
-            data_path = os.path.join(self.root_path, "test_data.pkl")
-            with open(data_path, "rb") as f:
-                data_dict = pickle.load(f)
+                self.data_x = data_dict["series"]
+                self.file_names = data_dict["file_names"]
 
-            self.data_x = data_dict["series"]
-            self.file_names = data_dict["file_names"]
+                # Print initial statistics
+                # self.print_data_stats(self.data_x, "Initial test data")
 
-            if self.scale and os.path.exists(scaler_path):
-                self.scaler = joblib.load(scaler_path)
+                # Apply log transformation
                 for i in range(len(self.data_x)):
-                    self.data_x[i] = self.scaler.transform(
-                        self.data_x[i].reshape(-1, 1)
-                    ).reshape(-1)
+                    self.data_x[i] = self.log_transform(self.data_x[i])
 
-        else:  # train or val
-            split_name = "train" if self.flag == "train" else "val"
-            data_path = os.path.join(self.root_path, f"{split_name}_data.pkl")
+                # self.print_data_stats(self.data_x, "After log transform (test)")
 
-            with open(data_path, "rb") as f:
-                data_dict = pickle.load(f)
+                if self.scale:
+                    try:
+                        self.scaler = joblib.load(self.scaler_path)
+                        for i in range(len(self.data_x)):
+                            self.data_x[i] = self.scaler.transform(
+                                self.data_x[i].reshape(-1, 1)
+                            ).reshape(-1)
+                            # Clip values to prevent extremes
+                            self.data_x[i] = np.clip(self.data_x[i], -10, 10)
 
-            self.data_x = data_dict["series"]
-            self.data_y = data_dict["labels"]
-            self.data_y[self.data_y == -1.0] = 0.0  # Convert -1 to 0
+                        # self.print_data_stats(self.data_x, "After scaling (test)")
+                    except FileNotFoundError:
+                        raise ValueError(
+                            "Scaler file not found. Please train the model first."
+                        )
 
-            # Apply scaling before augmentation if needed
-            if self.scale:
-                if self.flag == "train":
-                    all_data = np.concatenate(self.data_x)
-                    self.scaler.fit(all_data.reshape(-1, 1))
-                    dump(self.scaler, scaler_path)
-                elif os.path.exists(scaler_path):
-                    self.scaler = load(scaler_path)
+            else:  # train or val
+                split_name = "train" if self.flag == "train" else "val"
+                data_path = os.path.join(self.root_path, f"{split_name}_data.pkl")
 
+                with open(data_path, "rb") as f:
+                    data_dict = pickle.load(f)
+
+                self.data_x = data_dict["series"]
+                self.data_y = data_dict["labels"]
+                self.data_y[self.data_y == -1.0] = 0.0  # Convert -1 to 0
+
+                # Print initial statistics
+                # self.print_data_stats(self.data_x, f"Initial {split_name} data")
+
+                # Apply log transformation
                 for i in range(len(self.data_x)):
-                    self.data_x[i] = self.scaler.transform(
-                        self.data_x[i].reshape(-1, 1)
-                    ).reshape(-1)
+                    self.data_x[i] = self.log_transform(self.data_x[i])
 
-            # Apply augmentations only for training data
-            if self.flag == "train":
-                # augmented_x = []
-                # augmented_y = []
-
-                # # Generate augmentations for each original sequence
-                # for i in range(len(self.data_x)):
-                #     # Apply different augmentation methods
-                #     aug_sequences, aug_labels = time_series_augmentations(
-                #         self.data_x[i],
-                #         self.data_y[i],
-                #         cut_ratio=0.4,
-                #         num_augmentations=1,  # Generate one augmented version per original
-                #     )
-
-                #     augmented_x.extend(aug_sequences)
-                #     augmented_y.extend(aug_labels)
-
-                # # Combine original and augmented data
-                # self.data_x = np.concatenate([self.data_x, augmented_x], axis=0)
-                # self.data_y = np.concatenate([self.data_y, augmented_y], axis=0)
-
-                # Shuffle the combined dataset
-                shuffle_idx = np.random.permutation(len(self.data_x))
-                # print(
-                #     "DEBUG",
-                #     len(shuffle_idx),
-                #     type(shuffle_idx),
-                #     type(self.data_x),
-                #     type(self.data_y),
+                # self.print_data_stats(
+                #     self.data_x, f"After log transform ({split_name})"
                 # )
 
-                # Generate shuffle indices
-                shuffle_idx = np.random.permutation(len(self.data_x))
+                # Apply scaling
+                if self.scale:
+                    if self.flag == "train":
+                        # For training, fit a new scaler
+                        self.scaler = RobustScaler(quantile_range=(5.0, 95.0))
+                        all_data = np.concatenate(
+                            [x.reshape(-1, 1) for x in self.data_x]
+                        )
+                        self.scaler.fit(all_data)
+                        joblib.dump(self.scaler, self.scaler_path)
+                    else:
+                        try:
+                            self.scaler = joblib.load(self.scaler_path)
+                        except FileNotFoundError:
+                            raise ValueError(
+                                "Scaler file not found. Please train the model first."
+                            )
 
-                # Shuffle both data_x and data_y using the generated indices
-                shuffled_data_x = [self.data_x[i] for i in shuffle_idx]
-                shuffled_data_y = [self.data_y[i] for i in shuffle_idx]
+                    # Transform the data using the scaler
+                    for i in range(len(self.data_x)):
+                        self.data_x[i] = self.scaler.transform(
+                            self.data_x[i].reshape(-1, 1)
+                        ).reshape(-1)
+                        # Clip values to prevent extremes
+                        self.data_x[i] = np.clip(self.data_x[i], -10, 10)
 
-                # Convert back to NumPy arrays if needed
-                self.data_x = shuffled_data_x
-                self.data_y = shuffled_data_y
+                    # self.print_data_stats(self.data_x, f"After scaling ({split_name})")
+
+                if self.flag == "train":
+                    # Generate shuffle indices
+                    shuffle_idx = np.random.permutation(len(self.data_x))
+                    self.data_x = [self.data_x[i] for i in shuffle_idx]
+                    self.data_y = [self.data_y[i] for i in shuffle_idx]
+
+        except Exception as e:
+            logger.error(f"Error in data processing: {str(e)}")
+            raise
 
     def __getitem__(self, index):
-        seq_x = self.data_x[index]
-        if len(seq_x.shape) == 1:
-            seq_x = np.expand_dims(seq_x, axis=1)
-        if self.flag == "test":
+        try:
+            seq_x = self.data_x[index]
+            if len(seq_x.shape) == 1:
+                seq_x = np.expand_dims(seq_x, axis=1)
 
-            return torch.tensor(seq_x, dtype=torch.float32), torch.tensor(
-                torch.zeros([1, 94]), dtype=torch.float32
-            )
-        else:
-            seq_y = self.data_y[index]
-            if (
-                hasattr(self.args, "augmentation_ratio")
-                and self.args.augmentation_ratio > 0
-            ) and self.flag == "train":
-                seq_x, seq_y, _ = run_augmentation_single(seq_x, seq_y, self.args)
-            return torch.tensor(seq_x, dtype=torch.float32), torch.tensor(
-                seq_y, dtype=torch.float32
-            )
+            if self.flag == "test":
+                return torch.tensor(seq_x, dtype=torch.float32), torch.tensor(
+                    torch.zeros([1, 94]), dtype=torch.float32
+                )
+            else:
+                seq_y = self.data_y[index]
+                if (
+                    hasattr(self.args, "augmentation_ratio")
+                    and self.args.augmentation_ratio > 0
+                    and self.flag == "train"
+                ):
+                    seq_x, seq_y, _ = run_augmentation_single(seq_x, seq_y, self.args)
+
+                # Check for NaN or Inf values before returning
+                if np.any(np.isnan(seq_x)) or np.any(np.isinf(seq_x)):
+                    logger.warning(f"Found NaN or Inf values in sequence {index}")
+                    # Replace NaN/Inf with 0 to prevent training issues
+                    seq_x = np.nan_to_num(seq_x, nan=0.0, posinf=10.0, neginf=-10.0)
+
+                return torch.tensor(seq_x, dtype=torch.float32), torch.tensor(
+                    seq_y, dtype=torch.float32
+                )
+        except Exception as e:
+            logger.error(f"Error in __getitem__ for index {index}: {str(e)}")
+            raise
 
     def __len__(self):
         return len(self.data_x)
-
-    def inverse_transform(self, data):
-        return self.scaler.inverse_transform(data) if self.scale else data
 
     def get_label_distribution(self):
         """Helper method to get the distribution of labels"""
