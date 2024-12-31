@@ -437,21 +437,32 @@ def get_percentile_length(directory, percentile=95):
     return stats
 
 
-def clip_values(data):
+def resample_timeseries(times, values, interval="10min"):
     """
-    Clip values to range [-1e8, 1e8]
+    Resample time series data to a specified interval
 
     Parameters:
     -----------
-    data : numpy.ndarray
-        Input data array
+    times : array-like
+        Array of timestamps in nanoseconds
+    values : array-like
+        Array of corresponding values
+    interval : str, optional (default='10min')
+        Resampling interval in pandas offset string format
 
     Returns:
     --------
-    numpy.ndarray
-        Clipped data
+    tuple
+        Resampled times (as datetime), resampled values
     """
-    return np.clip(data, -1e8, 1e8)
+    # Convert nanosecond timestamps to pandas datetime
+    df = pd.DataFrame({"time": pd.to_datetime(times, unit="ns"), "value": values})
+    df.set_index("time", inplace=True)
+
+    # Resample data
+    resampled = df.resample(interval).mean().interpolate(method="linear")
+
+    return resampled.index.values, resampled["value"].values
 
 
 def prepare_train_timeseries_dataset(
@@ -459,18 +470,7 @@ def prepare_train_timeseries_dataset(
 ):
     """
     Prepare training/validation time series dataset from pickle files with multi-label support,
-    preserving original lengths
-
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        DataFrame containing file paths and labels
-    data_directory : str
-        Directory containing the pickle files
-    output_directory : str
-        Directory to save processed data
-    split_name : str
-        Name of the split ("train" or "val") for saving
+    including resampling to 10-minute intervals
     """
     filepath_column = df.columns[0]
     label_columns = df.columns[1:]
@@ -490,16 +490,19 @@ def prepare_train_timeseries_dataset(
 
         try:
             with open(file_path, "rb") as f:
-                train_X = pickle.load(f)
+                data = pickle.load(f)
 
-            if not ("t" in train_X and "v" in train_X):
+            if not ("t" in data and "v" in data):
                 print(f"Skipping {file_name}: Unexpected dictionary format")
                 continue
 
-            series_values = np.array(train_X["v"])
-            series_values = clip_values(series_values)
+            # Resample the time series
+            resampled_times, resampled_values = resample_timeseries(
+                data["t"], data["v"]
+            )
+            series_values = np.clip(resampled_values, -1e9, 1e9)
 
-            # Store the original series without padding
+            # Store the resampled series
             series_data.append(series_values.astype(np.float32))
             lengths.append(len(series_values))
             file_names.append(file_name)
@@ -514,7 +517,6 @@ def prepare_train_timeseries_dataset(
     # Convert labels and handle -1 values
     labels = np.array(labels, dtype=float)
     print(f"Before, number of 1s,0s: {np.sum(labels == 1.0)},{np.sum(labels == 0.0)}")
-    # labels[labels == 0.0] = 0.0
     labels[labels == -1.0] = 0.0
     print(f"Final number of 1s,0s: {np.sum(labels == 1.0)},{np.sum(labels == 0.0)}")
     print(f"Final Shape: {labels.shape}")
@@ -522,7 +524,6 @@ def prepare_train_timeseries_dataset(
     # Save the data
     os.makedirs(output_directory, exist_ok=True)
 
-    # Save as a dictionary to preserve variable lengths
     data = {
         "series": series_data,
         "labels": labels,
@@ -537,7 +538,7 @@ def prepare_train_timeseries_dataset(
     metadata = {
         "lengths": np.array(lengths),
         "label_columns": list(label_columns),
-        "value_range": {"min": -1e8, "max": 1e8},
+        "sampling_interval": "10min",
     }
 
     return data, metadata
@@ -546,7 +547,7 @@ def prepare_train_timeseries_dataset(
 def prepare_test_timeseries_dataset(test_directory, output_directory):
     """
     Prepare test time series dataset from pickle files without labels,
-    preserving original lengths
+    including resampling to 10-minute intervals
     """
     series_data = []
     lengths = []
@@ -562,16 +563,19 @@ def prepare_test_timeseries_dataset(test_directory, output_directory):
 
         try:
             with open(file_path, "rb") as f:
-                test_X = pickle.load(f)
+                data = pickle.load(f)
 
-            if not ("t" in test_X and "v" in test_X):
+            if not ("t" in data and "v" in data):
                 print(f"Skipping {file_name}: Unexpected dictionary format")
                 continue
 
-            series_values = np.array(test_X["v"])
-            series_values = clip_values(series_values)
+            # Resample the time series
+            resampled_times, resampled_values = resample_timeseries(
+                data["t"], data["v"]
+            )
+            series_values = np.clip(resampled_values, -1e9, 1e9)
 
-            # Store the original series without padding
+            # Store the resampled series
             series_data.append(series_values.astype(np.float32))
             lengths.append(len(series_values))
             file_names.append(file_name)
@@ -582,7 +586,6 @@ def prepare_test_timeseries_dataset(test_directory, output_directory):
     # Save the data
     os.makedirs(output_directory, exist_ok=True)
 
-    # Save as a dictionary to preserve variable lengths
     test_data = {
         "series": series_data,
         "lengths": np.array(lengths),
@@ -592,7 +595,6 @@ def prepare_test_timeseries_dataset(test_directory, output_directory):
     with open(os.path.join(output_directory, "test_data.pkl"), "wb") as f:
         pickle.dump(test_data, f)
 
-    # Save file names separately for convenience
     with open(os.path.join(output_directory, "test_file_names.txt"), "w") as f:
         for name in file_names:
             f.write(f"{name}\n")
@@ -605,6 +607,7 @@ def prepare_test_timeseries_dataset(test_directory, output_directory):
         "lengths": np.array(lengths),
         "file_names": file_names,
         "value_range": {"min": -1e8, "max": 1e8},
+        "sampling_interval": "10min",
     }
 
     return test_data, metadata
