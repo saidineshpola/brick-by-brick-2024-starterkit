@@ -523,7 +523,10 @@ def prepare_train_timeseries_dataset(
 
     # Save the data
     os.makedirs(output_directory, exist_ok=True)
-
+    # print min max, mean of lengths
+    print(
+        f"Length range: {min(lengths)} to {max(lengths)} with mean {np.mean(lengths)}"
+    )
     data = {
         "series": series_data,
         "labels": labels,
@@ -602,11 +605,12 @@ def prepare_test_timeseries_dataset(test_directory, output_directory):
     print("\nTest Dataset Information:")
     print(f"Number of series: {len(series_data)}")
     print(f"Length range: {min(lengths)} to {max(lengths)}")
-
+    print(
+        f"Length range: {min(lengths)} to {max(lengths)} with mean {np.mean(lengths)}"
+    )
     metadata = {
         "lengths": np.array(lengths),
         "file_names": file_names,
-        "value_range": {"min": -1e8, "max": 1e8},
         "sampling_interval": "10min",
     }
 
