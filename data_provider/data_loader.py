@@ -141,9 +141,6 @@ def run_augmentation_single(x, y, args):
     return aug_x[0], aug_y[0], {"method": "random_augmentation"}
 
 
-
-
-
 class Dataset_BBB(Dataset):
     def __init__(
         self,
@@ -265,7 +262,7 @@ class Dataset_BBB(Dataset):
                     self.data_y = [self.data_y[i] for i in shuffle_idx]
 
         except Exception as e:
-            logger.error(f"Error in data processing: {str(e)}")
+            print(f"Error in data processing: {str(e)}")
             raise
 
     def __getitem__(self, index):
@@ -291,7 +288,7 @@ class Dataset_BBB(Dataset):
                     seq_y, dtype=torch.float32
                 )
         except Exception as e:
-            logger.error(f"Error in __getitem__ for index {index}: {str(e)}")
+            print(f"Error in __getitem__ for index {index}: {str(e)}")
             raise
 
     def __len__(self):
