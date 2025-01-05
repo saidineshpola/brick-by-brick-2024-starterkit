@@ -50,7 +50,6 @@ python -u run.py \
     --d_model 64 \
     --d_ff 128 \
     --root_path /data/time_series/data/BBB \
-    --data_path train.csv \
     --model_id ETTh1_96_96 \
     --model 'Transformer' \
     --data BBB \
