@@ -976,13 +976,11 @@ class Exp_Classification(Exp_Basic):
 
                 # Apply optimal thresholds found during validation
                 if hasattr(self, "optimal_thresholds"):
-                    print("Using Optimal thresholds")
+                    # print("Using Optimal thresholds")
                     predictions = (probs >= self.optimal_thresholds).astype(np.float32)
                 else:
-                    print("Optimal threshold not found using default 0.5")
-                    predictions = (probs >= 0.5).astype(
-                        np.float32
-                    )  # fallback to default threshold
+                    # print("Optimal threshold not found using default 0.5")
+                    predictions = (probs >= 0.5).astype(np.float32)
 
                 for batch_idx in range(predictions.shape[0]):
                     all_predictions.append(
