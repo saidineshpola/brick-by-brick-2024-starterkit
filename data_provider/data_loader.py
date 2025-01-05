@@ -141,10 +141,7 @@ def run_augmentation_single(x, y, args):
     return aug_x[0], aug_y[0], {"method": "random_augmentation"}
 
 
-import logging
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class Dataset_BBB(Dataset):
@@ -185,7 +182,7 @@ class Dataset_BBB(Dataset):
             "nan_count": np.isnan(data).sum(),
             "inf_count": np.isinf(data).sum(),
         }
-        logger.info(f"\n{stage} statistics: {stats}")
+        print(f"\n{stage} statistics: {stats}")
         return stats
 
     def preprocess_data(self, data):
