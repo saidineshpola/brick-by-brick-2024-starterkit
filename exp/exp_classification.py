@@ -702,13 +702,23 @@ class Exp_Classification(Exp_Basic):
         )
         # model init
         model = self.model_dict[self.args.model].Model(self.args).float()
-        # model = ClassificationModel(base_model, hierarchy_dict)
+
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
 
         return model
 
     def _get_data(self, flag):
+        """
+        Get the data based on the provided flag.
+
+        Args:
+            flag: The flag indicating the type of data (TRAIN, VAL, TEST).
+
+        Returns:
+            data_set: The dataset.
+            data_loader: The data loader.
+        """
         data_set, data_loader = data_provider(self.args, flag)
         return data_set, data_loader
 
@@ -723,6 +733,15 @@ class Exp_Classification(Exp_Basic):
         return model_optim
 
     def _select_criterion(self, args):
+        """
+        Select the criterion (loss function) for the model.
+
+        Args:
+            args: Arguments for the experiment.
+
+        Returns:
+            criterion: The selected criterion.
+        """
         if args.loss == "BCE":
             print("USing BCE loss")
             criterion = nn.BCEWithLogitsLoss()  # reduction="sum")
@@ -739,6 +758,15 @@ class Exp_Classification(Exp_Basic):
         return criterion
 
     def train(self, setting):
+        """
+        Train the model.
+
+        Args:
+            setting: The setting for the experiment.
+
+        Returns:
+            model: The trained model.
+        """
 
         train_data, train_loader = self._get_data(flag="TRAIN")
         vali_data, vali_loader = self._get_data(flag="VAL")
@@ -758,10 +786,6 @@ class Exp_Classification(Exp_Basic):
         for epoch in range(self.args.train_epochs):
             iter_count = 0
             train_loss = []
-            # DELETEME
-            # vali_loss, val_accuracy, f1_score = self.vali(
-            #     vali_data, vali_loader, criterion
-            # )
             self.model.train()
             epoch_time = time.time()
 
@@ -827,7 +851,14 @@ class Exp_Classification(Exp_Basic):
 
     def _create_submission_df(self, predictions, label_columns_file):
         """
-        Create submission DataFrame with proper column names
+        Create submission DataFrame with proper column names.
+
+        Args:
+            predictions: List of predictions.
+            label_columns_file: Path to the file containing label columns.
+
+        Returns:
+            submission_df: The submission DataFrame.
         """
         # Read label columns
         train_df = pd.read_csv(label_columns_file)
@@ -844,6 +875,19 @@ class Exp_Classification(Exp_Basic):
         return pd.DataFrame(submission_data)
 
     def vali(self, vali_data, vali_loader, criterion):
+        """
+        Validate the model.
+
+        Args:
+            vali_data: Validation dataset.
+            vali_loader: Validation data loader.
+            criterion: Loss function.
+
+        Returns:
+            total_loss: Average validation loss.
+            val_accuracy: Validation accuracy.
+            f1_score: Validation F1 score.
+        """
         total_loss = []
         preds = []
         trues = []
@@ -1013,6 +1057,26 @@ def enforce_hierarchy_argmax(
     """
     Enforces hierarchical constraints on predictions using argmax for root nodes
     and propagates values up the hierarchy based on children.
+
+    Parameters:
+    predictions (np.ndarray): A 2D array of shape (batch_size, num_classes) containing the prediction scores.
+    root_class_indices (list): A list of indices representing the root classes in the hierarchy.
+    ancestor_threshold (float): The threshold value to assign to the selected root class.
+    child_threshold (float): The threshold value to determine if a parent class should be set to 1.0 based on its children.
+
+    Returns:
+    np.ndarray: A 2D array of the same shape as `predictions` with modified prediction scores based on hierarchical constraints.
+
+    Raises:
+    ValueError: If `predictions` is not a 2D array.
+
+    Example:
+    >>> predictions = np.array([[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+                                [0.6, 0.5, 0.4, 0.3, 0.2, 0.1]])
+    >>> root_class_indices = [0, 1, 2]
+    >>> enforce_hierarchy_argmax(predictions, root_class_indices)
+    array([[0. , 0. , 0. , 0.4, 0.5, 0.6],
+           [1. , 0.5, 0.4, 0.3, 0.2, 0.1]])
     """
     if len(predictions.shape) != 2:
         raise ValueError(
@@ -1066,6 +1130,21 @@ def enforce_hierarchy_argmax(
 
 
 def get_descendants(node, descendants=None):
+    """
+    Recursively finds all descendants of a given node in the hierarchy.
+
+    Parameters:
+    node (int): The node for which to find descendants.
+    descendants (set): A set to store the descendants. If None, a new set is created.
+
+    Returns:
+    set: A set containing all descendants of the given node.
+
+    Example:
+    >>> hierarchy_dict = {0: [1, 2], 1: [3, 4], 2: [5]}
+    >>> get_descendants(0)
+    {1, 2, 3, 4, 5}
+    """
     if descendants is None:
         descendants = set()
     if node in hierarchy_dict:
