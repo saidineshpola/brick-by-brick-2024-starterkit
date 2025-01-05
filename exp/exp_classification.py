@@ -407,7 +407,11 @@ hierarchy_dict = {
 }
 
 
-def calculate_metrics(y_true, y_pred_logits, threshold=0.5):
+def calculate_metrics(
+    y_true,
+    y_pred_logits,
+    threshold=0.5,
+):
     """
     Calculate multi-label classification metrics from sigmoid logits.
 
@@ -528,7 +532,7 @@ def calculate_metrics(y_true, y_pred_logits, threshold=0.5):
     }
 
 
-def print_metrics(metrics_dict, indx_to_labels=None):
+def print_metrics(metrics_dict, indx_to_labels=None, per_class=False):
     """
     Print metrics in a readable format
     """
@@ -537,309 +541,19 @@ def print_metrics(metrics_dict, indx_to_labels=None):
     print(f"Macro Precision: {metrics_dict['overall']['macro_precision']:.4f}")
     print(f"Macro Recall: {metrics_dict['overall']['macro_recall']:.4f}")
     print(f"Macro F1: {metrics_dict['overall']['macro_f1']:.4f}")
+    if per_class:
+        print("\nPer-class Metrics:")
+        for i in range(len(metrics_dict["per_class"]["f1"])):
+            if indx_to_labels:
+                class_name = indx_to_labels[i]
+            else:
+                class_name = i
 
-    print("\nPer-class Metrics:")
-    for i in range(len(metrics_dict["per_class"]["f1"])):
-        if indx_to_labels:
-            class_name = indx_to_labels[i]
-        else:
-            class_name = i
-
-        if metrics_dict["per_class"]["f1"][i] > 0:
-            print(f"\nClass {class_name}:")
-            print(f"  Precision: {metrics_dict['per_class']['precision'][i]:.4f}")
-            print(f"  Recall: {metrics_dict['per_class']['recall'][i]:.4f}")
-            print(f"  F1 Score: {metrics_dict['per_class']['f1'][i]:.4f}")
-
-
-class HierarchicalMultiLabelLoss(nn.Module):
-    def __init__(
-        self,
-        hierarchy_dict,
-        exclusive_classes=[5, 12, 54, 65, 66, 71],
-        alpha=0.1,
-        beta=1.0,
-        gamma=1.0,
-    ):
-        """
-        Custom loss for hierarchical multi-label classification with exclusive classes
-        and sub-hierarchies
-
-        Args:
-            hierarchy_dict: Dictionary mapping parent classes to their child classes
-            exclusive_classes: List of mutually exclusive class indices
-            alpha: Weight for hierarchical consistency loss
-            beta: Weight for exclusive classes loss
-            gamma: Weight for focal loss component to handle class imbalance
-        """
-        super(HierarchicalMultiLabelLoss, self).__init__()
-        self.hierarchy_dict = hierarchy_dict
-        self.exclusive_classes = exclusive_classes
-        self.alpha = alpha
-        self.beta = beta
-        self.gamma = gamma
-
-        # Build complete parent-child relationships including sub-hierarchies
-        self.all_relationships = self._build_all_relationships()
-
-    def _build_all_relationships(self):
-        """Build complete parent-child relationships including indirect descendants"""
-        relationships = {}
-
-        def get_all_descendants(parent):
-            descendants = set()
-            if parent in self.hierarchy_dict:
-                direct_children = self.hierarchy_dict[parent]
-                descendants.update(direct_children)
-                for child in direct_children:
-                    descendants.update(get_all_descendants(child))
-            return descendants
-
-        # Build complete relationships for each parent
-        for parent in self.hierarchy_dict:
-            relationships[parent] = get_all_descendants(parent)
-
-        return relationships
-
-    def forward(self, predictions, targets):
-        # Apply sigmoid to get probabilities
-        pred_probs = torch.sigmoid(predictions)
-
-        # Basic BCE loss with focal loss modification for class imbalance
-        pt = targets * pred_probs + (1 - targets) * (1 - pred_probs)
-        focal_weight = (1 - pt) ** self.gamma
-        bce_loss = F.binary_cross_entropy_with_logits(
-            predictions, targets, reduction="none"
-        )
-        focal_loss = (focal_weight * bce_loss).mean()
-
-        # Enhanced hierarchical consistency loss
-        hierarchy_loss = 0
-
-        # Process all hierarchical relationships
-        for parent, descendants in self.all_relationships.items():
-            parent_probs = pred_probs[:, parent]
-            child_indices = list(descendants)
-
-            if child_indices:  # Check if parent has any children
-                child_probs = pred_probs[:, child_indices]
-
-                # Parent probability should be >= max of child probabilities
-                max_child_probs = torch.max(child_probs, dim=1)[0]
-                hierarchy_loss += F.relu(max_child_probs - parent_probs).mean()
-
-                # When parent is 0, all children should be 0
-                parent_mask = targets[:, parent] == 0
-                if parent_mask.any():
-                    hierarchy_loss += (child_probs[parent_mask].sum(dim=1)).mean()
-
-        # Exclusive classes loss
-        exclusive_probs = pred_probs[:, self.exclusive_classes]
-        exclusive_loss = abs(torch.sum(exclusive_probs, dim=1) - 1.0).mean()
-
-        # Combine losses
-        total_loss = (
-            focal_loss + self.alpha * hierarchy_loss + self.beta * exclusive_loss
-        )
-        if np.random.random() < 0.1:
-            print(
-                f"Focal loss: {focal_loss:.2f}, Hierarchy loss: {self.alpha *hierarchy_loss:.2f}, "
-                f"Exclusive loss: {self.beta *exclusive_loss:.2f}"
-            )
-
-        return total_loss
-
-
-class ImprovedHierarchicalMultiLabelLoss(nn.Module):
-    def __init__(
-        self,
-        hierarchy_dict,
-        num_classes=94,
-        exclusive_classes=[5, 12, 54, 65, 66, 71],
-        alpha=0.1,
-        beta=1.0,
-        gamma=2.0,
-        class_weights=None,
-    ):
-        super(ImprovedHierarchicalMultiLabelLoss, self).__init__()
-        self.hierarchy_dict = hierarchy_dict
-        self.exclusive_classes = exclusive_classes
-        self.alpha = alpha
-        self.beta = beta
-        self.gamma = gamma
-        self.num_classes = num_classes
-
-        # Initialize class weights if not provided
-        if class_weights is None:
-            self.register_buffer("class_weights", torch.ones(num_classes))
-        else:
-            self.register_buffer("class_weights", class_weights)
-
-        self.all_relationships = self._build_all_relationships()
-        self.pos_mining_thresh = 0.7
-        self.neg_mining_thresh = 0.3
-
-    def _build_all_relationships(self):
-        """Build complete parent-child relationships including indirect descendants"""
-        relationships = {}
-
-        def get_all_descendants(parent):
-            descendants = set()
-            if parent in self.hierarchy_dict:
-                direct_children = self.hierarchy_dict[parent]
-                descendants.update(direct_children)
-                for child in direct_children:
-                    descendants.update(get_all_descendants(child))
-            return descendants
-
-        for parent in self.hierarchy_dict:
-            relationships[parent] = get_all_descendants(parent)
-
-        return relationships
-
-    def compute_class_weights(self, targets, device):
-        """Dynamically compute class weights based on batch statistics"""
-        pos_counts = targets.sum(dim=0)
-        neg_counts = targets.size(0) - pos_counts
-        pos_weights = torch.where(
-            pos_counts > 0, neg_counts / pos_counts, torch.ones_like(pos_counts) * 10.0
-        )
-        return pos_weights.to(device)
-
-    def forward(self, predictions, targets):
-        # Ensure inputs are on the same device
-        device = predictions.device
-        targets = targets.to(device)
-
-        # Compute dynamic weights and ensure they're on the correct device
-        dynamic_weights = self.compute_class_weights(targets, device)
-        # Move class_weights to the same device as predictions
-        class_weights = self.class_weights.to(device)
-        combined_weights = class_weights * dynamic_weights
-
-        # Apply sigmoid to get probabilities
-        pred_probs = torch.sigmoid(predictions)
-
-        # Enhanced focal loss with class weights
-        pt = targets * pred_probs + (1 - targets) * (1 - pred_probs)
-        focal_weight = (1 - pt) ** self.gamma
-
-        # Calculate BCE loss
-        bce_loss = F.binary_cross_entropy_with_logits(
-            predictions, targets, reduction="none"
-        )
-
-        # Apply class weights to BCE loss
-        weighted_bce_loss = bce_loss * combined_weights.unsqueeze(0)
-        focal_loss = (focal_weight * weighted_bce_loss).mean()
-
-        # Hard example mining
-        with torch.no_grad():
-            hard_pos_mask = (pred_probs < self.pos_mining_thresh) & (targets == 1)
-            hard_neg_mask = (pred_probs > self.neg_mining_thresh) & (targets == 0)
-            mining_mask = hard_pos_mask | hard_neg_mask
-
-        # Apply mining mask to loss
-        mined_loss = (weighted_bce_loss * mining_mask.float()).sum() / (
-            mining_mask.sum() + 1e-6
-        )
-
-        # Enhanced hierarchical consistency loss
-        hierarchy_loss = torch.tensor(0.0, device=device)
-        for parent, descendants in self.all_relationships.items():
-            parent_probs = pred_probs[:, parent]
-            child_indices = list(descendants)
-
-            if child_indices:
-                child_probs = pred_probs[:, child_indices]
-
-                # Parent probability should be >= max of child probabilities
-                max_child_probs = torch.max(child_probs, dim=1)[0]
-                hierarchy_loss += F.relu(max_child_probs - parent_probs).mean()
-
-                # When parent is 0, all children should be 0
-                parent_mask = targets[:, parent] == 0
-                if parent_mask.any():
-                    hierarchy_loss += (
-                        torch.pow(child_probs[parent_mask], 2).sum(dim=1).mean()
-                    )
-
-        # Exclusive classes loss with softmax
-        if self.exclusive_classes:
-            exclusive_logits = predictions[:, self.exclusive_classes]
-            exclusive_targets = targets[:, self.exclusive_classes]
-            exclusive_loss = F.cross_entropy(
-                exclusive_logits, exclusive_targets.float()
-            )
-        else:
-            exclusive_loss = torch.tensor(0.0, device=device)
-
-        # Combine all losses
-        total_loss = (
-            0.4 * focal_loss
-            + 0.4 * mined_loss
-            + self.alpha * hierarchy_loss
-            + self.beta * exclusive_loss
-        )
-        if np.random.random() < 0.1:
-            print(f"Focal loss: {focal_loss:.2f},Mined loss {mined_loss:.2f}")
-
-        return total_loss
-
-
-class ClassificationModel(nn.Module):
-    def __init__(self, base_model, hierarchy_dict):
-        super(ClassificationModel, self).__init__()
-        self.base_model = base_model
-        self.sigmoid = nn.Sigmoid()
-        self.hierarchy_dict = hierarchy_dict
-        self.exclusive_classes = [5, 12, 54, 65, 66, 71]
-        self.all_relationships = self._build_all_relationships()
-
-    def _build_all_relationships(self):
-        """Build complete parent-child relationships including indirect descendants"""
-        relationships = {}
-
-        def get_all_descendants(parent):
-            descendants = set()
-            if parent in self.hierarchy_dict:
-                direct_children = self.hierarchy_dict[parent]
-                descendants.update(direct_children)
-                for child in direct_children:
-                    descendants.update(get_all_descendants(child))
-            return descendants
-
-        for parent in self.hierarchy_dict:
-            relationships[parent] = get_all_descendants(parent)
-
-        return relationships
-
-    def forward(self, x, padding_mask, *args):
-        logits = self.base_model(x, padding_mask, *args)
-        return logits
-
-    def predict(self, x, padding_mask, *args):
-        logits = self.forward(x, padding_mask, *args)
-        probs = self.sigmoid(logits)
-
-        # Apply hierarchical constraints during inference
-        with torch.no_grad():
-            # Process all hierarchical relationships
-            for parent, descendants in self.all_relationships.items():
-                child_indices = list(descendants)
-                if child_indices:
-                    child_probs = probs[:, child_indices]
-                    max_child_probs = torch.max(child_probs, dim=1)[0]
-                    probs[:, parent] = torch.maximum(probs[:, parent], max_child_probs)
-
-            # Handle exclusive classes - only keep the highest probability
-            exclusive_probs = probs[:, self.exclusive_classes]
-            max_exclusive_probs, max_indices = torch.max(exclusive_probs, dim=1)
-            exclusive_mask = torch.zeros_like(exclusive_probs)
-            exclusive_mask.scatter_(1, max_indices.unsqueeze(1), 1)
-            probs[:, self.exclusive_classes] = exclusive_probs * exclusive_mask
-
-        return probs
+            if metrics_dict["per_class"]["f1"][i] > 0:
+                print(f"\nClass {class_name}:")
+                print(f"  Precision: {metrics_dict['per_class']['precision'][i]:.4f}")
+                print(f"  Recall: {metrics_dict['per_class']['recall'][i]:.4f}")
+                print(f"  F1 Score: {metrics_dict['per_class']['f1'][i]:.4f}")
 
 
 class Exp_Classification(Exp_Basic):
@@ -867,8 +581,8 @@ class Exp_Classification(Exp_Basic):
             else self.args.num_class
         )
         # model init
-        base_model = self.model_dict[self.args.model].Model(self.args).float()
-        model = ClassificationModel(base_model, hierarchy_dict)
+        model = self.model_dict[self.args.model].Model(self.args).float()
+        # model = ClassificationModel(base_model, hierarchy_dict)
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
 
@@ -907,7 +621,7 @@ class Exp_Classification(Exp_Basic):
 
         train_data, train_loader = self._get_data(flag="TRAIN")
         vali_data, vali_loader = self._get_data(flag="VAL")
-        test_data, test_loader = self._get_data(flag="TEST")
+        # test_data, test_loader = self._get_data(flag="TEST")
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
@@ -1046,9 +760,13 @@ class Exp_Classification(Exp_Basic):
         # self.optimal_thresholds = 0.4
         print("Optimal_throesholds", self.optimal_thresholds)
         # Apply optimal thresholds
+
         thresholded_preds = (predictions >= self.optimal_thresholds).astype(int)
+        thresholded_preds = enforce_hierarchy_argmax(thresholded_preds)
         # thresholded_preds = enforce_hierarchy(thresholded_preds)
         print("Predictions", thresholded_preds[:2])
+        # Enforce hierarchy constraints
+
         metrics = calculate_metrics(trues, thresholded_preds)
         print_metrics(metrics, indx_to_labels)
 
@@ -1117,6 +835,7 @@ class Exp_Classification(Exp_Basic):
         Modified test method to use optimal thresholds found during validation
         """
         test_data, test_loader = self._get_data(flag="TEST")
+        file_names = test_data.file_names
         if test:
             print("loading model")
             self.model.load_state_dict(
@@ -1125,6 +844,7 @@ class Exp_Classification(Exp_Basic):
             print("Model Loaded from checkpoint")
 
         all_predictions = []
+        all_predictions_with_heirarchy = []
 
         with open(
             os.path.join(self.args.root_path, self.args.test_files_names), "r"
@@ -1146,12 +866,14 @@ class Exp_Classification(Exp_Basic):
 
                 # Apply optimal thresholds found during validation
                 if hasattr(self, "optimal_thresholds"):
+                    print("Using Optimal thresholds")
                     predictions = (probs >= self.optimal_thresholds).astype(np.float32)
                 else:
+                    print("Optimal threshold not found using default 0.5")
                     predictions = (probs >= 0.5).astype(
                         np.float32
                     )  # fallback to default threshold
-                # predictions = enforce_hierarchy(predictions)
+
                 for batch_idx in range(predictions.shape[0]):
                     all_predictions.append(
                         {
@@ -1168,22 +890,21 @@ class Exp_Classification(Exp_Basic):
         output_path = os.path.join("./results", setting, "submission")
         os.makedirs(output_path, exist_ok=True)
         final_df.to_csv(f"{output_path}/submission_final.csv", index=False)
+
         print(f"Saved final predictions to {output_path}/submission_final.csv")
 
         return
 
 
-def enforce_hierarchy_argmax(predictions, class_indices=[5, 12, 21, 65, 66, 71]):
+def enforce_hierarchy_argmax(
+    predictions,
+    root_class_indices=[5, 12, 21, 65, 66, 71],
+    ancestor_threshold=1.0,
+    child_threshold=0.8,
+):
     """
-    Enforces hierarchical constraints on predictions one row at a time using argmax.
-    Only keeps ancestors and descendants of the selected node (highest probability among specified indices).
-
-    Args:
-        predictions: numpy array of shape (batch_size, num_classes) containing probabilities
-        class_indices: List of class indices to consider for argmax
-
-    Returns:
-        modified_predictions: numpy array of shape (batch_size, num_classes) with hierarchy enforced
+    Enforces hierarchical constraints on predictions using argmax for root nodes
+    and propagates values up the hierarchy based on children.
     """
     if len(predictions.shape) != 2:
         raise ValueError(
@@ -1192,60 +913,51 @@ def enforce_hierarchy_argmax(predictions, class_indices=[5, 12, 21, 65, 66, 71])
 
     batch_size, num_classes = predictions.shape
     modified_predictions = np.zeros_like(predictions)
+    node_descendants = {node: get_descendants(node) for node in root_class_indices}
 
-    # Pre-compute ancestors and descendants for relevant nodes
-    node_ancestors = {}
-    node_descendants = {}
-    for node in class_indices:
-        node_ancestors[node] = get_ancestors(node)
-        node_descendants[node] = get_descendants(node)
-
-    # Process one row at a time
     for row_idx in range(batch_size):
         row = predictions[row_idx]
-        modified_row = np.zeros(num_classes)
 
-        # Get probabilities only for specified indices
-        specified_probs = {idx: row[idx] for idx in class_indices if idx < num_classes}
+        # Get root probabilities and find max
+        root_probs = {idx: row[idx] for idx in root_class_indices if idx < num_classes}
 
-        if specified_probs:
-            # Find the index with highest probability among specified classes
-            selected_node = max(specified_probs.items(), key=lambda x: x[1])[0]
+        if root_probs:
+            selected_root = max(root_probs.items(), key=lambda x: x[1])[0]
 
-            # Set the selected node to 1
-            modified_row[selected_node] = 1.0
+            # Set selected root to threshold
+            modified_predictions[row_idx, selected_root] = ancestor_threshold
 
-            # Set all ancestors to 1
-            ancestors = node_ancestors[selected_node]
-            for ancestor in ancestors:
-                if ancestor < num_classes:
-                    modified_row[ancestor] = 1.0
-
-            # Set all descendants to 1
-            descendants = node_descendants[selected_node]
-            for descendant in descendants:
+            # Keep original probabilities for descendants
+            for descendant in node_descendants[selected_root]:
                 if descendant < num_classes:
-                    modified_row[descendant] = 1.0
+                    modified_predictions[row_idx, descendant] = row[descendant]
 
-        # Update the final predictions matrix
-        modified_predictions[row_idx] = modified_row
+            # Propagate values up the hierarchy based on children
+            modified = True
+            while modified:
+                modified = False
+                for node in hierarchy_dict:
+                    if node < num_classes:
+                        children = hierarchy_dict.get(node, [])
+                        if children:
+                            # If any child is above threshold, set parent to 1
+                            children_values = [
+                                modified_predictions[row_idx, child]
+                                for child in children
+                                if child < num_classes
+                            ]
+                            if (
+                                children_values
+                                and max(children_values) >= child_threshold
+                            ):
+                                if modified_predictions[row_idx, node] != 1.0:
+                                    modified_predictions[row_idx, node] = 1.0
+                                    modified = True
 
     return modified_predictions
 
 
-def get_ancestors(node, ancestors=None):
-    """Helper function to get all ancestors of a node"""
-    if ancestors is None:
-        ancestors = set()
-    for parent, children in hierarchy_dict.items():
-        if node in children and parent not in ancestors:
-            ancestors.add(parent)
-            get_ancestors(parent, ancestors)
-    return ancestors
-
-
 def get_descendants(node, descendants=None):
-    """Helper function to get all descendants of a node"""
     if descendants is None:
         descendants = set()
     if node in hierarchy_dict:
