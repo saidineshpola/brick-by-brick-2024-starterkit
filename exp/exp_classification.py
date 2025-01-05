@@ -407,6 +407,126 @@ hierarchy_dict = {
 }
 
 
+class ImprovedHierarchicalMultiLabelLoss(nn.Module):
+    def __init__(
+        self,
+        hierarchy_dict,
+        num_classes=94,
+        exclusive_classes=[5, 12, 54, 65, 66, 71],
+        alpha=0.1,
+        beta=1.0,
+        gamma=2.0,
+        class_weights=None,
+    ):
+        super(ImprovedHierarchicalMultiLabelLoss, self).__init__()
+        self.hierarchy_dict = hierarchy_dict
+        self.exclusive_classes = exclusive_classes
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.num_classes = num_classes
+        # Initialize class weights if not provided
+        if class_weights is None:
+            self.register_buffer("class_weights", torch.ones(num_classes))
+        else:
+            self.register_buffer("class_weights", class_weights)
+        self.all_relationships = self._build_all_relationships()
+        self.pos_mining_thresh = 0.7
+        self.neg_mining_thresh = 0.3
+
+    def _build_all_relationships(self):
+        """Build complete parent-child relationships including indirect descendants"""
+        relationships = {}
+
+        def get_all_descendants(parent):
+            descendants = set()
+            if parent in self.hierarchy_dict:
+                direct_children = self.hierarchy_dict[parent]
+                descendants.update(direct_children)
+                for child in direct_children:
+                    descendants.update(get_all_descendants(child))
+            return descendants
+
+        for parent in self.hierarchy_dict:
+            relationships[parent] = get_all_descendants(parent)
+        return relationships
+
+    def compute_class_weights(self, targets, device):
+        """Dynamically compute class weights based on batch statistics"""
+        pos_counts = targets.sum(dim=0)
+        neg_counts = targets.size(0) - pos_counts
+        pos_weights = torch.where(
+            pos_counts > 0, neg_counts / pos_counts, torch.ones_like(pos_counts) * 10.0
+        )
+        return pos_weights.to(device)
+
+    def forward(self, predictions, targets):
+        # Ensure inputs are on the same device
+        device = predictions.device
+        targets = targets.to(device)
+        # Compute dynamic weights and ensure they're on the correct device
+        dynamic_weights = self.compute_class_weights(targets, device)
+        # Move class_weights to the same device as predictions
+        class_weights = self.class_weights.to(device)
+        combined_weights = class_weights * dynamic_weights
+        # Apply sigmoid to get probabilities
+        pred_probs = torch.sigmoid(predictions)
+        # Enhanced focal loss with class weights
+        pt = targets * pred_probs + (1 - targets) * (1 - pred_probs)
+        focal_weight = (1 - pt) ** self.gamma
+        # Calculate BCE loss
+        bce_loss = F.binary_cross_entropy_with_logits(
+            predictions, targets, reduction="none"
+        )
+        # Apply class weights to BCE loss
+        weighted_bce_loss = bce_loss * combined_weights.unsqueeze(0)
+        focal_loss = (focal_weight * weighted_bce_loss).mean()
+        # Hard example mining
+        with torch.no_grad():
+            hard_pos_mask = (pred_probs < self.pos_mining_thresh) & (targets == 1)
+            hard_neg_mask = (pred_probs > self.neg_mining_thresh) & (targets == 0)
+            mining_mask = hard_pos_mask | hard_neg_mask
+        # Apply mining mask to loss
+        mined_loss = (weighted_bce_loss * mining_mask.float()).sum() / (
+            mining_mask.sum() + 1e-6
+        )
+        # Enhanced hierarchical consistency loss
+        hierarchy_loss = torch.tensor(0.0, device=device)
+        for parent, descendants in self.all_relationships.items():
+            parent_probs = pred_probs[:, parent]
+            child_indices = list(descendants)
+            if child_indices:
+                child_probs = pred_probs[:, child_indices]
+                # Parent probability should be >= max of child probabilities
+                max_child_probs = torch.max(child_probs, dim=1)[0]
+                hierarchy_loss += F.relu(max_child_probs - parent_probs).mean()
+                # When parent is 0, all children should be 0
+                parent_mask = targets[:, parent] == 0
+                if parent_mask.any():
+                    hierarchy_loss += (
+                        torch.pow(child_probs[parent_mask], 2).sum(dim=1).mean()
+                    )
+        # Exclusive classes loss with softmax
+        if self.exclusive_classes:
+            exclusive_logits = predictions[:, self.exclusive_classes]
+            exclusive_targets = targets[:, self.exclusive_classes]
+            exclusive_loss = F.cross_entropy(
+                exclusive_logits, exclusive_targets.float()
+            )
+        else:
+            exclusive_loss = torch.tensor(0.0, device=device)
+        # Combine all losses
+        total_loss = (
+            0.4 * focal_loss
+            + 0.4 * mined_loss
+            + self.alpha * hierarchy_loss
+            + self.beta * exclusive_loss
+        )
+        if np.random.random() < 0.1:
+            print(f"Focal loss: {focal_loss:.2f},Mined loss {mined_loss:.2f}")
+        return total_loss
+
+
 def calculate_metrics(
     y_true,
     y_pred_logits,
@@ -596,6 +716,7 @@ class Exp_Classification(Exp_Basic):
         model_optim = optim.Adam(
             self.model.parameters(), lr=self.args.learning_rate, weight_decay=1e-5
         )
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(model_optim, "min")
         # model_optim = optim.RAdam(
         #     self.model.parameters(), lr=self.args.learning_rate, weight_decay=1e-5
         # )
@@ -621,7 +742,6 @@ class Exp_Classification(Exp_Basic):
 
         train_data, train_loader = self._get_data(flag="TRAIN")
         vali_data, vali_loader = self._get_data(flag="VAL")
-        # test_data, test_loader = self._get_data(flag="TEST")
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
@@ -652,9 +772,7 @@ class Exp_Classification(Exp_Basic):
                 batch_x = batch_x.float().to(self.device)
                 padding_mask = padding_mask.float().to(self.device)
                 label = label.to(self.device)
-                # print("Shape of array", batch_x.shape, padding_mask.shape)
                 outputs = self.model(batch_x, padding_mask, None, None)
-                # print("Output and target Shapes", outputs.shape, label.shape)
                 loss = criterion(outputs, label.squeeze(-1))
                 train_loss.append(loss.item())
 
@@ -685,7 +803,7 @@ class Exp_Classification(Exp_Basic):
             vali_loss, val_accuracy, f1_score = self.vali(
                 vali_data, vali_loader, criterion
             )
-            # test_loss, test_accuracy = self.valata, test_loader, criterion)
+            self.scheduler.step(vali_loss)
 
             print(
                 "Epoch: {0}, Steps: {1} | Train Loss: {2:.3f} Vali Loss: {3:.3f} Vali Acc: {4:.3f} Vali F1score:{5:.3f}".format(
@@ -740,7 +858,6 @@ class Exp_Classification(Exp_Basic):
                 outputs = self.model(
                     batch_x, padding_mask, None, None
                 )  # self.model.module.predict(batch_x, padding_mask, None, None)
-                # outputs = self.model.module.predict(batch_x, padding_mask, None, None)
                 loss = criterion(outputs, label).cpu()
 
                 preds.append(outputs.detach())
@@ -757,15 +874,10 @@ class Exp_Classification(Exp_Basic):
 
         # Find optimal thresholds during validation
         self.optimal_thresholds = self.find_optimal_thresholds(predictions, trues)
-        # self.optimal_thresholds = 0.4
-        print("Optimal_throesholds", self.optimal_thresholds)
-        # Apply optimal thresholds
 
         thresholded_preds = (predictions >= self.optimal_thresholds).astype(int)
         thresholded_preds = enforce_hierarchy_argmax(thresholded_preds)
         # thresholded_preds = enforce_hierarchy(thresholded_preds)
-        print("Predictions", thresholded_preds[:2])
-        # Enforce hierarchy constraints
 
         metrics = calculate_metrics(trues, thresholded_preds)
         print_metrics(metrics, indx_to_labels)
@@ -858,10 +970,8 @@ class Exp_Classification(Exp_Basic):
                 batch_x = batch_x.float().to(self.device)
                 padding_mask = padding_mask.float().to(self.device)
 
-                outputs = self.model(
-                    batch_x, padding_mask, None, None
-                )  # self.model.module.predict(batch_x, padding_mask, None, None)
-                # outputs = self.model.module.predict(batch_x, padding_mask, None, None)
+                outputs = self.model(batch_x, padding_mask, None, None)
+
                 probs = torch.sigmoid(outputs).cpu().numpy()
 
                 # Apply optimal thresholds found during validation
