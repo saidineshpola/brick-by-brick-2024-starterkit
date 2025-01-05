@@ -41,8 +41,8 @@ python preprocess.py \
 
 ```
 python -u run.py   --task_name classification   --is_training 1   --root_path /data/time_series/data/BBB   --model_id ETTh1_96_96 \
-   --model 'TimesNet'   --data BBB   --seq_len 8100   --e_layer 4   --enc_in 1   --d_model 8   --d_ff 32   --des 'ExpBBB' \
-  --itr 1   --top_k 3   --train_epochs 20   --   --num_class 94  --dropout 0.3   --batch_size 16    --learning_rate 0.001
+   --model 'Transformer'   --data BBB   --seq_len 336   --e_layer 4   --enc_in 4   --d_model 64   --d_ff 128   --des 'ExpBBB' \
+  --itr 1   --top_k 3   --train_epochs 100   --   --num_class 94  --dropout 0.3   --batch_size 128    --learning_rate 0.001
 ```
 4. Colab notebook
    <a href="https://colab.research.google.com/drive/1Bs6aE5gSlM_K0IKH3x2AcvVmuzrpjmzt#scrollTo=DoX7_j6K6T7z" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
