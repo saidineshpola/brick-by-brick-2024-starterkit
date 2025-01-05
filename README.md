@@ -37,7 +37,6 @@ python preprocess.py \
     --test_directory ./test_X/ \
     --csv_file ./train_y_v0.1.0.csv \
     --output_directory ./processed_data/ \
-    --percentile 95 \
     --val_percentage 0.2 \
 ```
 
