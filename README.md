@@ -40,9 +40,8 @@ python preprocess.py \
 3. Train and evaluate model. We provide the experiment scripts for all benchmarks under the folder `./scripts/`. You can reproduce the experiment results as the following example:
 
 ```
-python -u run.py   --task_name classification   --is_training 1   --root_path /data/time_series/data/BBB   --model_id ETTh1_96_96 \
-   --model 'Transformer'   --data BBB   --seq_len 336   --e_layer 4   --enc_in 4   --d_model 64   --d_ff 128   --des 'ExpBBB' \
-  --itr 1   --top_k 3   --train_epochs 100   --   --num_class 94  --dropout 0.3   --batch_size 128    --learning_rate 0.001
+python -u run.py   --task_name classification   --is_trainin 4   --d_model 64  --d_ff 128   -
+ng 1   --root_path /data1/max/telugu_corpus/time_series/data/BBB   --data_path train.csv   --model_id ETTh1_96_96   --model 'Transformer'   --data BBB   --seq_len 336   --e_layer 4   --enc_in 4   --d_model 64  --d_ff 128   --des 'Exp2.2'   --itr 1   --top_k 3   --train_epochs 100   --use_multi_gpu   --num_class 94  --dropout 0.1   --batch_size 512    --learning_rate 0.001
 ```
 4. Colab notebook
    <a href="https://colab.research.google.com/drive/1Bs6aE5gSlM_K0IKH3x2AcvVmuzrpjmzt#scrollTo=DoX7_j6K6T7z" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
