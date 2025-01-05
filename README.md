@@ -70,16 +70,16 @@ python -u run.py \
     --batch_size 512 \
     --learning_rate 0.001
 ```
-Try experimening with different settings
+Try experimenting with different settings
 
-4. Colab notebook
+### 4. Colab notebook
    <a href="https://colab.research.google.com/drive/1Bs6aE5gSlM_K0IKH3x2AcvVmuzrpjmzt#scrollTo=DoX7_j6K6T7z" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
    
   ## File Structure
 
   - `data_provider/`: Contains classes for dataset loading, including `data_loader.py`.
   - `exp/`: Contains experiment scripts, including `exp_classification.py` for training the classification model.
-  - `preprocess.py`: Script for preprocessing the data.
+  - `preprocess.py`: Script for preprocessing the data before training.
   - `run.py`: Main script to run the training and evaluation.
   - `scripts/`: Contains additional scripts for running experiments.
 
