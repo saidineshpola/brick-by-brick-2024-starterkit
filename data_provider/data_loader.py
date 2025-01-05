@@ -141,7 +141,26 @@ def run_augmentation_single(x, y, args):
     return aug_x[0], aug_y[0], {"method": "random_augmentation"}
 
 
+
 class Dataset_BBB(Dataset):
+    """
+    Custom Dataset class for loading and preprocessing data.
+
+    Attributes:
+        args: Arguments passed to the dataset.
+        root_path: Root directory path where data files are stored.
+        flag: Indicates whether the dataset is for training, validation, or testing.
+        features: Type of features to be used.
+        scale: Boolean indicating whether to apply scaling.
+        timeenc: Time encoding flag.
+        freq: Frequency of the data.
+        seed: Random seed for reproducibility.
+        val_ratio: Ratio of validation data.
+        data_x: List of input data series.
+        data_y: List of labels corresponding to the input data.
+        file_names: List of file names (only for test data).
+    """
+
     def __init__(
         self,
         args,
@@ -155,6 +174,21 @@ class Dataset_BBB(Dataset):
         seed=42,
         val_ratio=0.2,
     ):
+        """
+        Initializes the Dataset_BBB object with the given parameters.
+
+        Args:
+            args: Arguments passed to the dataset.
+            root_path: Root directory path where data files are stored.
+            flag: Indicates whether the dataset is for training, validation, or testing.
+            size: Size of the dataset (not used in this implementation).
+            features: Type of features to be used.
+            scaling: Boolean indicating whether to apply scaling.
+            timeenc: Time encoding flag.
+            freq: Frequency of the data.
+            seed: Random seed for reproducibility.
+            val_ratio: Ratio of validation data.
+        """
         self.args = args
         self.features = features
         self.scale = scaling
@@ -168,7 +202,16 @@ class Dataset_BBB(Dataset):
         self.__read_data__()
 
     def print_data_stats(self, data, stage):
-        """Helper function to print data statistics"""
+        """
+        Helper function to print data statistics.
+
+        Args:
+            data: Data for which statistics are to be printed.
+            stage: Stage of the data (e.g., 'train', 'val', 'test').
+
+        Returns:
+            Dictionary containing statistics of the data.
+        """
         if isinstance(data, list):
             data = np.concatenate(data)
         stats = {
@@ -183,7 +226,15 @@ class Dataset_BBB(Dataset):
         return stats
 
     def preprocess_data(self, data):
-        """Apply selective log transformation to data"""
+        """
+        Apply selective log transformation to data.
+
+        Args:
+            data: Input data to be preprocessed.
+
+        Returns:
+            Preprocessed data.
+        """
         data = np.array(data, dtype=np.float32)
         transformed = np.zeros_like(data)
 
@@ -207,7 +258,15 @@ class Dataset_BBB(Dataset):
         return transformed * signs
 
     def inverse_transform(self, data):
-        """Inverse transform the preprocessing"""
+        """
+        Inverse transform the preprocessing.
+
+        Args:
+            data: Preprocessed data to be inverse transformed.
+
+        Returns:
+            Original data before preprocessing.
+        """
         data = np.array(data)
         signs = np.sign(data)
         abs_data = np.abs(data)
@@ -227,6 +286,9 @@ class Dataset_BBB(Dataset):
         return transformed
 
     def __read_data__(self):
+        """
+        Reads data from files and applies preprocessing.
+        """
         try:
             if self.flag == "test":
                 data_path = os.path.join(self.root_path, "test_data.pkl")
@@ -266,6 +328,15 @@ class Dataset_BBB(Dataset):
             raise
 
     def __getitem__(self, index):
+        """
+        Retrieves a single data point from the dataset.
+
+        Args:
+            index: Index of the data point to retrieve.
+
+        Returns:
+            Tuple of input data and corresponding label (or dummy label for test data).
+        """
         try:
             seq_x = self.data_x[index]
             if len(seq_x.shape) == 1:
@@ -292,14 +363,24 @@ class Dataset_BBB(Dataset):
             raise
 
     def __len__(self):
+        """
+        Returns the length of the dataset.
+
+        Returns:
+            Length of the dataset.
+        """
         return len(self.data_x)
 
     def get_label_distribution(self):
-        """Helper method to get the distribution of labels"""
+        """
+        Helper method to get the distribution of labels.
+
+        Returns:
+            Sum of labels across the dataset.
+        """
         if hasattr(self, "data_y"):
             return np.sum(self.data_y, axis=0)
         return None
-
 
 # Sample collate_fn
 def collate_fn(batch, max_len):
