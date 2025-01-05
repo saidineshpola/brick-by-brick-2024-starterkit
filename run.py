@@ -182,7 +182,7 @@ if __name__ == "__main__":
         "--batch_size", type=int, default=64, help="batch size of train input data"
     )
     parser.add_argument(
-        "--patience", type=int, default=5, help="early stopping patience"
+        "--patience", type=int, default=10, help="early stopping patience"
     )
     parser.add_argument(
         "--learning_rate", type=float, default=0.0001, help="optimizer learning rate"
@@ -190,7 +190,7 @@ if __name__ == "__main__":
     parser.add_argument("--des", type=str, default="test", help="exp description")
     parser.add_argument("--loss", type=str, default="BCE", help="loss function")
     parser.add_argument(
-        "--lradj", type=str, default="type1", help="adjust learning rate"
+        "--lradj", type=str, default="cosine", help="adjust learning rate"
     )
     parser.add_argument(
         "--use_amp",
@@ -342,13 +342,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--label_columns_file",
         type=str,
-        default="train_y_v0.1.0.csv",
+        default="/data1/max/telugu_corpus/time_series/train_y_v0.1.0.csv",
         help="Path to label columns file",
     )
     parser.add_argument(
         "--test_files_names",
         type=str,
-        default="test_file_names.txt",
+        default="/data1/max/telugu_corpus/time_series/data/BBB/test_file_names.txt",
         help="Path to label columns file",
     )
 
